@@ -1,7 +1,44 @@
 # 2D Image Convolution using MPI and AVX instructions
 2D image convolution in C using MPI and AVX SIMD instructions.
 
-A tutorial about SIMD in Greek.
+## Usage and Compilation Instructions
+### Image format
+The format should be top-down, row-ordered and uncompressed (This can be the usual .raw files or any other file that meets these requirements). It also should not have any heading part. Bytes per pixel can be an arbitrary number (although it must be given as command-line argument) as long as it is the same in all pixels. Furthermore, width and height,
+depending on the number of processes, say p, must be ones such that the image can be divided in p equal rectangles.
+
+### Compilation
+This source is supposed to be working in both Windows and Linux.<br/>
+I cover the only the 2 most prevalent compilers (MSVC and GCC) but you probably can get similar functionality on Clang (or any
+other compiler for that matter).
+
+#### Linux
+To compile the program, you should have any standard distribution of MPI installed. The most popular distribution is the [MPICH](https://www.mpich.org/). You can find more info their page and installation instructions. The mpicc script that comes
+with it on the Linux version is based on gcc. Then, to compile:
+``` mpicc mpi.c -o mpi ``` <br/>
+
+#### Windows
+On Windows, things are a little bit more fucked-up. The only somewhat useful tutorial that I found was [this](https://blogs.technet.microsoft.com/windowshpc/2015/02/02/how-to-compile-and-run-a-simple-ms-mpi-program/).
+Personally, I followed instructions so that I can compile on cmd (not Visual Studio). That basically means that the (least) steps
+which should be done correctly are the installation and the setup of enviromental variables. <br/>
+However, you should, in some way, have some version of MSVC (the Microsoft C/C++ compiler). The easiest way to get one is by installing the most minimal version of [Visual Studio](https://visualstudio.microsoft.com/vs/). Having done that, you should be able to just open one of the developer command prompts that it comes with, type ```cl``` and the compiler should just work. <br/>Then (hey, not done yet), you should be able to run a scipt like the compile.bat that I have in this repo and compile your MPI source files (then again, it's Microsoft we're talking about...).<br/>
+
+#### SIMD version
+To compile the SIMD version, first of all your CPU should support [AVX](https://en.wikipedia.org/wiki/Advanced_Vector_Extensions).
+One easy way to check that is by typing ``` lscpu | grep "avx" ``` on Linux. If it returns anything, then you probably have it. <br/>
+In Windows, you can run some CPU analyzer, like (CPU-Z](https://www.cpuid.com/softwares/cpu-z.html). Check on the _Instructions_ and
+you should see something like _AVX_.<br/>
+Moreover, your compiler should support AVX intrinsics (which are basically C instructions that translate directly to x86 assembly). Both MSVC and GCC support such intrinsics. <br/>
+If none of that works, you can search about your CPU model online. <br/>
+If your CPU doesn't seem to support AVX, then it may support SSE which is an older version of SIMD extensions. You can check that similarly. However, the instructions should be changed to the respective SSE counterparts (I don't include that here but you can 
+easily do it by searching about SSE).
+
+### Usage
+You should run your executable through the mpiexec script, provided by the MPI implementation. A minimal execution command is something like that: <br/>
+``` mpiexec -n p ./name_of_executable [input file path] [width] [height] [bytes per pixel] [convolution iterations]``` <br/>
+where p is some integer that denotes the number of processes to be spawned and [] denote the respective input parameters.
+<br/><br/>
+
+A tutorial introduction to SIMD in Greek.
 ## Σχετικά με το SIMD
 SIMD = Single Instruction, Multiple Data <br/>
 Αναφέρεται σε επεξεργαστές που μπορούν να προγραμματιστούν κάνοντας χρήση data-level
@@ -209,8 +246,7 @@ dest, αλλά εδώ θα παράγουμε 3! Αυτό είναι πολύ σ
 
 Και έτσι, έχουμε την μονοδιάστατη συνέλιξη.
 
---- Δισδιάστατη Συνέλιξη ---
-
+## Δισδιάστατη Συνέλιξη
 Προχορώντας στην δισδιάστατη συνέλιξη, αν έχουμε καταλάβει λίγο τη λογική του SIMD, είναι
 αμέσως αντιληπτό ότι έχουμε ένα σημαντικό πρόβλημα. Η 9-αδα των γειτονικών source
 δεν είναι σε συνεχόμενες θέσεις μνήμης! Τώρα, μάλλον υπάρχουν καλύτερες λύσεις από αυτή
@@ -229,7 +265,7 @@ dest, αλλά εδώ θα παράγουμε 3! Αυτό είναι πολύ σ
 Οπότε, με 2 κάθετες προσθέσεις, έχουμε σε κάθε θέση ένα dest στοιχείο.
 
 
---- Δισδιάστατη Συνέλιξη σε Πολύκάναλες εικόνες ---
+## Δισδιάστατη Συνέλιξη σε Πολυκάναλες Εικόνες
 
 Φαίνεται ότι μπορούμε να εφαρμόσουμε εύκολα τα από πάνω για εικόνες grayscale. Τα source
 στοιχεία είναι ακέραιοι που συμβολίζουν τα pixel και όλα δουλεύουν ακριβώς όπως πάνω.
@@ -246,7 +282,7 @@ dest, αλλά εδώ θα παράγουμε 3! Αυτό είναι πολύ σ
 θέσεις μνήμης όπως αναφέραμε πιο πάνω. Η λύση σε αυτό το πρόβλημα είναι πολύ απλή
 και πολύ διαδεδομένη, δηλαδή απλά αναδιατάζουμε τα χρώματα χωρίζοντας τα κανάλια, κάνουμε
 τις πράξεις και μετά τα αναδιατάζουμε για να την αποθηκεύσουμε. Δηλαδή θα είναι κάπως έτσι: <br/>
-![2d memory layout multichannel restructured](./text_images/memory_layout2.png)
+![2d memory layout multichannel restructured](./text_images/memory_layout3.png)
 
 ## To AVX σύνολο επεκτάσεων (εντολές και καταχωρητές)
 Τέλος, περνάμε στο τεχνικό (και βαρετό :P) κομμάτι της υλοποίησης, δηλαδή θα πρέπει να αναφέρω ποιες τεχνολογίες
