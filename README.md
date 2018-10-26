@@ -12,7 +12,7 @@ I cover the only the 2 most prevalent compilers (MSVC and GCC) but you probably 
 other compiler for that matter).
 
 #### Linux
-To compile the program, you should have any standard distribution of MPI installed. The most popular distribution is the [MPICH](https://www.mpich.org/). You can find more info their page and installation instructions. The mpicc script that comes
+To compile the program, you should have any standard implementation of MPI installed. The most popular implementation is the [MPICH](https://www.mpich.org/). You can find more info their page and installation instructions. The mpicc script that comes
 with it on the Linux version is based on gcc. Then, to compile:
 ``` mpicc mpi.c -o mpi ``` <br/>
 
