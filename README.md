@@ -3,8 +3,8 @@
 
 ## Usage and Compilation Instructions
 ### Image format
-The format should be top-down, row-ordered and uncompressed (This can be the usual .raw files or any other file that meets these requirements). It also should not have any heading part. Bytes per pixel can be an arbitrary number (although it must be given as command-line argument) as long as it is the same in all pixels. Furthermore, width and height,
-depending on the number of processes, say p, must be ones such that the image can be divided in p equal rectangles.
+The format should be top-down, row-ordered and uncompressed (This can be the usual .raw files or any other file that meets these requirements). It also should not have any heading part (although you can easily tweak the code to both support arbitrary heading part and also to get info from that part). Bytes per pixel can be an arbitrary number (although it must be given as command-line argument) as long as it is the same in all pixels. Furthermore, width and height,
+depending on the number of processes, must be ones such that the image can be divided in p equal rectangles.
 
 ### Compilation
 This source is supposed to be working in both Windows and Linux.<br/>
@@ -25,18 +25,90 @@ However, you should, in some way, have some version of MSVC (the Microsoft C/C++
 #### SIMD version
 To compile the SIMD version, first of all your CPU should support [AVX](https://en.wikipedia.org/wiki/Advanced_Vector_Extensions).
 One easy way to check that is by typing ``` lscpu | grep "avx" ``` on Linux. If it returns anything, then you probably have it. <br/>
-In Windows, you can run some CPU analyzer, like (CPU-Z](https://www.cpuid.com/softwares/cpu-z.html). Check on the _Instructions_ and
+In Windows, you can run some CPU analyzer, like [CPU-Z](https://www.cpuid.com/softwares/cpu-z.html). Check on the _Instructions_ and
 you should see something like _AVX_.<br/>
-Moreover, your compiler should support AVX intrinsics (which are basically C instructions that translate directly to x86 assembly). Both MSVC and GCC support such intrinsics. <br/>
 If none of that works, you can search about your CPU model online. <br/>
 If your CPU doesn't seem to support AVX, then it may support SSE which is an older version of SIMD extensions. You can check that similarly. However, the instructions should be changed to the respective SSE counterparts (I don't include that here but you can 
-easily do it by searching about SSE).
+easily do it by searching about SSE).<br/>
+Moreover, your compiler should support AVX intrinsics (which are basically C instructions that translate directly to x86 assembly). Both MSVC and GCC support such intrinsics. <br/>
 
 ### Usage
 You should run your executable through the mpiexec script, provided by the MPI implementation. A minimal execution command is something like that: <br/>
 ``` mpiexec -n p ./name_of_executable [input file path] [width] [height] [bytes per pixel] [convolution iterations]``` <br/>
 where p is some integer that denotes the number of processes to be spawned and [] denote the respective input parameters.
+<br/>
+
+## Implementation Details
+Main implementation details:
+1) Structure of Data and Hanlding of edges cases. That is a problem that arises in standard, non-parallelized, non-SIMD convolution. That is because
+for the convolution of 1 pixel you need its 8 surrounding pixels and there is a decision to be made on what to do on pixels
+that don't have 8 surrounding pixels (i.e. corners).
+
+The implementation uses two padding columns and two padding rows to avoid testing whether we are in an edge case or not.
+These padding pixels are initialized to 0, which is usually considered black. That's the convention but you could also choose
+some other color. You could also choose to consider the center pixel's color for the non-existent pixels (in this way, you would
+not use padding though as you would have tests for the edge cases). Visually, if you imagine a 3x3 grayscale color image (1 byte per pixel),
+the data to be processed would look something like that: <br/>
+![Single Channel Padding](/text_images/single_channel_padding_structure.png)
+
+where Ai is one byte representing a color value and X some padding pixel. For a 3x3 multicolor (2-color, i.e. 2 bytes per pixel) image, we would be something like that: <br/>
+![Multi Channel Padding](/text_images/multi_channel_padding_structure.png)
+
+Note a couple AiBi is considered **_1_** pixel. For that reason, one padding pixel is **_2_** Xs. Normally, I would use this structure for
+multicolor images but because of SIMD, colors have to be split for separate processing. You can read about SIMD below for more info. The
+structure that is finally used would look like that in the image: <br/>
+![Multi Channel Split Padding](/text_images/multi_channel_split_padding.png)
+
+You can see that colors have been split up (and their respective padding bytes) and now each color can be processed as single-channel
+image.
 <br/><br/>
+
+Another thing that should be metioned is how data are split. This is kind of obvious. Every process has to get an equal amount
+of data to process, hence the requirement that the width, height and number of processes in which the program will run have
+to be some combination that makes it possible for equal split of data between them. As an example, if a 4x4 image is to be processed
+by 4 processes, every process will get a 2x2 part. <br/><br/>
+
+2) Communication and I/O. Because the program is parallel, using multiple processes, a way has to be defined in which data are distributed among these processes, the way I/O is done and how these processes communicate.
+
+Because the source image is in a source file, I use parallel I/O routines provided by MPI and in that way, each process can
+read its own part in parallel with all the other. <br/> <br/>
+
+Communication is one of the most important implementation aspects. The main problem is that since each process has _some part_ of the
+image and not the whole thing, edge cases become much more complicated. In a serial implementation, the only edge cases are those
+described in 1), in which surrounding pixels don't actually exist and you have to take a decision on what to consider a surrounding pixel. <br/>
+In parallel however, in the edge cases, surrounding pixels possibly exist... it's just that the process does not have access to them. <br/>
+To better understand the problem, say that you have a single-channel, 4x4 image that is to be processed by 4 processes. The image looks like that: <br/>
+![Multi Channel Split Padding](/text_images/4x4_single_channel.png)
+
+
+Each process (of the 4) will get a 2x2 part. So for example, process 0 will take the top left 2x2 part: <br/>
+**A1 A2** <br/>
+**A5 A6** <br/>
+
+Now, the handling of data for each process is the same as in a serial implementation, as it was described in 1). So, with 2 padding
+rows and 2 padding columns, we have: <br/>
+![Multi Channel Split Padding](/text_images/2x2_part.png)
+
+It is obvious that computing any pixel will give inaccurate results. For example, A6 _does_ have 8 surrouding pixel but they're
+not accessible by this process. <br/>
+For that reason, processes have to exchange their top and bottom rows and left and right colums. For example, every process
+gives its last valid row (for the example, that would be A5 A6) and gets one valid row from the process below, which it places
+where padding pixels where supposed to be. That accounts for a total of 4 sends and 4 receives. <br/>
+
+But, there are a number of caveats in all of that. First, not every process has 4 neighbors. In the example with the 4x4 image in
+4 processes, _no_ process has 4 neighbors. To handle that, I do some simple computations based on the process rank.<br/><br/>
+Moreover, what happens with the corner data? Consider the initial image. For the convolution
+of A6, you need two pixels from the process below (A9, A10), two pixels from the process on the right (A3, A7) and you would ideally
+need to have the pixel A11. But, A11 is in the bottom-right process. To account for such cases, you would need to exchange data
+not only "on the cross" but also diagonally. Even worse, the overhead of the communication compared to how much data you exchange (1 pixel per exchange) is massive. For that reason, I don't exchange diagonally. Instead, the corner pixels in such cases are just considered black.
+
+Last but not least, multicolor images have to be addressed. Basically, the idea is the same. The only thing that changes is how
+do you send those rows and columns, especially the rows. That is because with the SIMD structure below (i.e. colors are split), rows
+are 1-color's-data-length apart. That is handled by using a suitable MPI vector type.<br/><br/>
+
+3) Structure of Data for SIMD processing. For data to be processed using SIMD extensions, they have to follow some requirements.<br/>
+
+SIMD is a whole topic on its own. For further info on why data is structured in a certain way, you can skim the last sections below. For a detailed description and tutorial in SIMD, read the whole thing. <br/><br/>
 
 A tutorial introduction to SIMD in Greek.
 ## Σχετικά με το SIMD
@@ -259,8 +331,6 @@ dest, αλλά εδώ θα παράγουμε 3! Αυτό είναι πολύ σ
 Έστω ότι θέλουμε να υπολογίσουμε τα στοιχεία της μεσαίας γραμμής. Αν κάνουμε μονοδιάστατη συνέλιξη στα στοιχεία της 1ης γραμμής χρησιμοποιώντας τα 3 πρώτα στοιχεία του φίλτρου, έχουμε
 το "πάνω" μέρος της δισδιάστατης συνέλιξης. Αντίστοιχα, στη μεσαία με τα επόμενα τρία
 στοιχεία του φίλτρου έχουμε τη "μεσαία" και στην 3η, την "κάτω". Κι' αυτό ισχύει για κάθε γραμμή.
-
-
 
 Οπότε, με 2 κάθετες προσθέσεις, έχουμε σε κάθε θέση ένα dest στοιχείο.
 
